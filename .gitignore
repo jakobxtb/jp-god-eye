@@ -5,9 +5,9 @@ dist/
 .env.local
 .env.*.local
 .gev-cache/
-qa-shots/
-*.log
-.DS_Store
 .gev-logs/
+qa-shots/
 __pycache__/
 *.pyc
+*.log
+.DS_Store

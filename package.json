@@ -6,13 +6,13 @@
   "type": "module",
   "license": "MIT",
   "author": "Bilawal Sidhu",
-  "homepage": "https://github.com/jakobxtb/jp-god-eye#readme",
+  "homepage": "https://github.com/JakobPapaj/jp-god-eye#readme",
   "repository": {
     "type": "git",
-    "url": "https://github.com/jakobxtb/jp-god-eye.git"
+    "url": "https://github.com/JakobPapaj/jp-god-eye.git"
   },
   "bugs": {
-    "url": "https://github.com/jakobxtb/jp-god-eye/issues"
+    "url": "https://github.com/JakobPapaj/jp-god-eye/issues"
   },
   "engines": {
     "node": ">=24.14.0 <25 || >=26 <27"

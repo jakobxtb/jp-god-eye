@@ -8539,6 +8539,31 @@ function normalizeAisTimestamp(value) {
  * plugins, configures the dev server host/port, and exposes selected
  * API keys to the client as import.meta.env defines.
  */
+/**
+ * Make an API-proxy plugin serve in PRODUCTION as well as in dev.
+ *
+ * Vite calls `configureServer` for `vite dev` and `configurePreviewServer` for
+ * `vite preview` — the mode a real deployment runs in. Eleven of this app's
+ * proxies only declared the dev hook, so a built-and-served instance answered
+ * /api/opensky, /api/cctv/sources, /api/firms and eight more with the HTML
+ * shell instead of data: the app looked fine and had no flights, cameras,
+ * satellites or traffic.
+ *
+ * Copying the hook is safe for these plugins specifically because each one only
+ * touches `server.middlewares`, which both server types expose. A plugin that
+ * reached for a dev-only API (`watcher`, `ws`, `httpServer`) would need its own
+ * preview implementation instead, so this deliberately does NOT overwrite a
+ * `configurePreviewServer` a plugin already defines.
+ *
+ * @param {object} plugin - Vite plugin object.
+ * @returns {object} The plugin, with a preview hook when it lacked one.
+ */
+function servedInProduction(plugin) {
+  if (!plugin || typeof plugin.configureServer !== 'function') return plugin;
+  if (plugin.configurePreviewServer) return plugin;
+  return { ...plugin, configurePreviewServer: plugin.configureServer };
+}
+
 export default defineConfig(({ mode }) => {
   // Load only this checkout's dotenv files. Shell/Keychain values still win,
   // and no sibling workspace is consulted implicitly.
@@ -8550,25 +8575,30 @@ export default defineConfig(({ mode }) => {
   return {
     plugins: [
       cesium(),
-      openSkyProxy(),
-      celestrakProxy(),
-      tomtomProxy(),
-      firmsProxy(),
-      rocketLaunchesProxy(),
-      terrainHeightsProxy(),
-      adsbdbProxy(),
-      overpassProxy(),
-      militaryInstallationsProxy(),
-      regionalBriefProxy(),
-      weatherEffectsProxy(),
-      cctvProxy(),
-      radioBrowserProxy(),
-      gbfsProxy(),
-      adsbLolProxy(),
-      aisLiveProxy(),
-      trackBackfillProxies(),
-      openAiRealtimeProxy(),
-      keylessGeoProxy(),
+      // Every API proxy below is wrapped so it also answers under
+      // `vite preview` — the mode a deployed instance runs in. Without this,
+      // a production build serves the page but not its data.
+      ...[
+        openSkyProxy(),
+        celestrakProxy(),
+        tomtomProxy(),
+        firmsProxy(),
+        rocketLaunchesProxy(),
+        terrainHeightsProxy(),
+        adsbdbProxy(),
+        overpassProxy(),
+        militaryInstallationsProxy(),
+        regionalBriefProxy(),
+        weatherEffectsProxy(),
+        cctvProxy(),
+        radioBrowserProxy(),
+        gbfsProxy(),
+        adsbLolProxy(),
+        aisLiveProxy(),
+        trackBackfillProxies(),
+        openAiRealtimeProxy(),
+        keylessGeoProxy(),
+      ].map(servedInProduction),
     ],
     server: {
       host: env.HOST || 'localhost',
