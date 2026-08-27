@@ -1,0 +1,64 @@
+{
+  "name": "jp-god-eye",
+  "private": true,
+  "version": "0.1.0",
+  "description": "JP GOD EYE — a real-time intelligence console for planet Earth. 3D globe, live aircraft/ships/satellites/earthquakes/CCTV, hands-free voice control. Runs in a browser on free data sources.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Bilawal Sidhu",
+  "homepage": "https://github.com/JakobPapaj/jp-god-eye#readme",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/JakobPapaj/jp-god-eye.git"
+  },
+  "bugs": {
+    "url": "https://github.com/JakobPapaj/jp-god-eye/issues"
+  },
+  "engines": {
+    "node": ">=24.14.0 <25 || >=26 <27"
+  },
+  "keywords": [
+    "cesium",
+    "3d-globe",
+    "geospatial",
+    "osint",
+    "spatial-intelligence",
+    "adsb",
+    "ais",
+    "satellites",
+    "visualization",
+    "openstreetmap",
+    "sentinel-2",
+    "free-tier"
+  ],
+  "scripts": {
+    "dev": "concurrently -n GLOBE,OSIRIS -c cyan,magenta \"vite\" \"npm --prefix osiris run dev -- --port ${OSIRIS_PORT:-3000}\"",
+    "dev:secure": "./scripts/dev-secure.sh",
+    "opensky:import": "./scripts/opensky-import-client.sh",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "node scripts/run-unit-tests.mjs",
+    "test:track": "node scripts/track-regression.mjs",
+    "qa:map-source-tray": "node scripts/qa-map-source-tray.mjs",
+    "dev:globe": "vite",
+    "dev:osiris": "npm --prefix osiris run dev",
+    "install:all": "npm install && npm --prefix osiris install",
+    "build:all": "vite build && npm --prefix osiris run build"
+  },
+  "dependencies": {
+    "@mapbox/vector-tile": "^3.0.0",
+    "cesium": "^1.124.0",
+    "egm96-universal": "^1.1.1",
+    "mgrs": "^2.1.0",
+    "pbf": "^5.1.2",
+    "satellite.js": "^6.0.2"
+  },
+  "devDependencies": {
+    "puppeteer": "^24.37.5",
+    "sharp": "^0.34.5",
+    "vite": "^6.0.0",
+    "vite-plugin-cesium": "^1.2.23",
+    "ws": "^8.21.0",
+    "concurrently": "^9.1.2"
+  }
+}

@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.next/
+.env
+.env.local
+.env.*.local
+.gev-cache/
+qa-shots/
+*.log
+.DS_Store

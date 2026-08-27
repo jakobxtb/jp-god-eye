@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>JP GOD EYE — Setup</title>
+  <style>
+    :root { --accent:#78c8ff; --bg:#05070a; --panel:rgba(255,255,255,.03); --line:rgba(255,255,255,.09); }
+    * { box-sizing:border-box; }
+    body { margin:0; padding:40px 20px 80px; background:var(--bg); color:rgba(255,255,255,.85);
+           font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:13px; line-height:1.55; }
+    .wrap { max-width:680px; margin:0 auto; }
+    h1 { font-size:22px; letter-spacing:.18em; color:var(--accent); margin:0 0 4px; }
+    .sub { color:rgba(255,255,255,.45); letter-spacing:.1em; font-size:11px; margin-bottom:28px; }
+    .note { background:rgba(120,200,255,.07); border-left:2px solid var(--accent);
+            padding:12px 14px; margin-bottom:26px; font-size:12px; }
+    .note b { color:var(--accent); }
+    fieldset { border:1px solid var(--line); padding:16px 18px 6px; margin:0 0 20px; }
+    legend { color:var(--accent); letter-spacing:.14em; font-size:11px; padding:0 8px; }
+    .field { margin-bottom:18px; }
+    .field-head { display:flex; align-items:baseline; justify-content:space-between; gap:12px; }
+    label { color:rgba(255,255,255,.9); font-weight:600; }
+    .status { font-size:10px; letter-spacing:.1em; padding:1px 7px; border:1px solid var(--line);
+              color:rgba(255,255,255,.4); }
+    .status.set { color:#7dd87d; border-color:rgba(125,216,125,.45); }
+    .unlocks { color:rgba(255,255,255,.5); font-size:12px; margin:3px 0 7px; }
+    input[type=password], input[type=text] {
+      width:100%; padding:9px 11px; background:var(--panel); border:1px solid var(--line);
+      color:#fff; font:inherit; }
+    input:focus { outline:1px solid var(--accent); border-color:var(--accent); }
+    .hint { font-size:11px; color:rgba(255,255,255,.35); margin-top:4px; }
+    .hint a { color:var(--accent); }
+    .err { color:#ff8080; font-size:11px; margin-top:4px; }
+    .actions { display:flex; gap:10px; align-items:center; margin-top:8px; }
+    button { padding:11px 22px; background:rgba(120,200,255,.12); border:1px solid var(--accent);
+             color:var(--accent); font:inherit; letter-spacing:.12em; cursor:pointer; }
+    button:hover { background:rgba(120,200,255,.2); }
+    button[disabled] { opacity:.5; cursor:not-allowed; }
+    #msg { font-size:12px; }
+    #msg.ok { color:#7dd87d; } #msg.bad { color:#ff8080; }
+    .foot { margin-top:26px; font-size:11px; color:rgba(255,255,255,.35); }
+    .foot a { color:var(--accent); }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <h1>JP GOD EYE</h1>
+  <div class="sub">SETUP · API KEYS</div>
+
+  <div class="note">
+    <b>Everything here is optional.</b> The application runs fully without a single key —
+    flights, satellites, earthquakes, ~370 cameras, radio, terrain, search and routing all
+    work out of the box. Each key below widens one layer. <b>All are free tiers with no
+    credit card.</b>
+    <br /><br />
+    This page only accepts connections from this computer, and writes to a local
+    <code>.env</code> file. Values are never sent anywhere else and are never displayed back.
+  </div>
+
+  <form id="form"></form>
+
+  <div class="actions">
+    <button type="submit" form="form" id="save">SAVE KEYS</button>
+    <span id="msg"></span>
+  </div>
+
+  <div class="foot">
+    After saving, <b>restart the dev server</b> (<code>Ctrl+C</code>, then <code>npm run dev</code>) —
+    the globe bakes its client-visible token at build time.
+    <br />Then open <a href="/">the globe</a> or <a href="/osiris">OSIRIS</a>.
+  </div>
+</div>
+
+<script type="module">
+  const form = document.getElementById('form');
+  const msg = document.getElementById('msg');
+  const saveBtn = document.getElementById('save');
+
+  const esc = (s) => String(s).replace(/[&<>"]/g, (c) => (
+    { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' }[c]));
+
+  const load = async () => {
+    const res = await fetch('/api/setup/status');
+    if (!res.ok) {
+      form.innerHTML = '<p class="err">Setup is only reachable from the machine running the server.</p>';
+      saveBtn.disabled = true;
+      return;
+    }
+    const { keys, configured } = await res.json();
+    const groups = { globe: [], osiris: [] };
+    for (const key of keys) groups[key.target].push(key);
+
+    form.innerHTML = Object.entries(groups).map(([target, list]) => `
+      <fieldset>
+        <legend>${target === 'globe' ? 'GLOBE' : 'OSIRIS'}</legend>
+        ${list.map((k) => `
+          <div class="field">
+            <div class="field-head">
+              <label for="${esc(k.name)}">${esc(k.label)}</label>
+              <span class="status ${configured[k.name] ? 'set' : ''}">${configured[k.name] ? 'CONFIGURED' : 'NOT SET'}</span>
+            </div>
+            <div class="unlocks">${esc(k.unlocks)}</div>
+            <input type="password" id="${esc(k.name)}" name="${esc(k.name)}" autocomplete="off"
+                   spellcheck="false" placeholder="${configured[k.name] ? 'Leave blank to keep current value' : 'Paste key here'}" />
+            <div class="hint">${k.hint ? esc(k.hint) + ' · ' : ''}<a href="${esc(k.url)}" target="_blank" rel="noopener noreferrer">Get it free →</a></div>
+            <div class="err" data-err="${esc(k.name)}"></div>
+          </div>`).join('')}
+      </fieldset>`).join('');
+  };
+
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    for (const el of form.querySelectorAll('[data-err]')) el.textContent = '';
+    msg.textContent = 'Saving…'; msg.className = '';
+    saveBtn.disabled = true;
+
+    // Only send fields the operator actually typed into: a blank field means
+    // "leave whatever is already configured alone", not "clear it".
+    const payload = {};
+    for (const input of form.querySelectorAll('input')) {
+      if (input.value.trim() !== '') payload[input.name] = input.value.trim();
+    }
+    if (!Object.keys(payload).length) {
+      msg.textContent = 'Nothing to save — every field was blank.';
+      msg.className = 'bad';
+      saveBtn.disabled = false;
+      return;
+    }
+
+    try {
+      const res = await fetch('/api/setup/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        for (const [name, error] of Object.entries(data.errors || {})) {
+          const el = form.querySelector(`[data-err="${name}"]`);
+          if (el) el.textContent = error;
+        }
+        msg.textContent = data.error || 'Some keys were rejected.';
+        msg.className = 'bad';
+      } else {
+        msg.textContent = `Saved ${data.saved.length} key(s). Restart the server to apply.`;
+        msg.className = 'ok';
+        for (const input of form.querySelectorAll('input')) input.value = '';
+        await load();
+      }
+    } catch (error) {
+      msg.textContent = String(error?.message || error);
+      msg.className = 'bad';
+    } finally {
+      saveBtn.disabled = false;
+    }
+  });
+
+  load();
+</script>
+</body>
+</html>
