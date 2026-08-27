@@ -8600,6 +8600,34 @@ export default defineConfig(({ mode }) => {
         keylessGeoProxy(),
       ].map(servedInProduction),
     ],
+    preview: {
+      // `vite preview` is the mode a DEPLOYED instance runs in, and it refuses
+      // any Host header it does not recognise — a DNS-rebinding guard. On a
+      // hosting platform the public hostname is assigned by the platform, so
+      // without this the deploy succeeds and every request answers
+      // "Blocked request. This host is not allowed."
+      //
+      // Resolution order:
+      //   1. PREVIEW_ALLOWED_HOSTS — explicit comma-separated list, wins.
+      //   2. RENDER_EXTERNAL_HOSTNAME — Render injects this automatically, so a
+      //      Render deploy needs no configuration at all.
+      //   3. localhost only — the safe local default.
+      // Setting PREVIEW_ALLOWED_HOSTS=* disables the check; that is a
+      // deliberate opt-out for platforms that route through an unpredictable
+      // hostname, not the default.
+      host: env.HOST || '0.0.0.0',
+      port: parseInt(env.PORT, 10) || 4173,
+      allowedHosts: (() => {
+        const explicit = String(env.PREVIEW_ALLOWED_HOSTS || '').trim();
+        if (explicit === '*') return true;
+        const listed = explicit
+          ? explicit.split(',').map((entry) => entry.trim()).filter(Boolean)
+          : [];
+        const platformHost = String(env.RENDER_EXTERNAL_HOSTNAME || '').trim();
+        if (platformHost) listed.push(platformHost);
+        return listed.length ? [...listed, 'localhost', '127.0.0.1'] : ['localhost', '127.0.0.1'];
+      })(),
+    },
     server: {
       host: env.HOST || 'localhost',
       port: parseInt(env.PORT, 10) || 5173,
