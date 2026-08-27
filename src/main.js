@@ -74,10 +74,38 @@ async function init() {
   try {
     loaderStatus.textContent = 'Configuring viewer...';
 
-    // Set Cesium Ion token for World Terrain
-    const cesiumToken = import.meta.env.CESIUM_ION_TOKEN;
-    if (cesiumToken) {
-      Cesium.Ion.defaultAccessToken = cesiumToken;
+    // Set Cesium Ion token for World Terrain.
+    //
+    // The token is VALIDATED before it is trusted. A token that is present but
+    // rejected is worse than no token at all: every ion stack still counts as
+    // "available", the app picks Bing as its sharpest default, and then every
+    // single tile 401s — a black globe with no fallback, because the stack
+    // activated successfully and only the tiles failed. Observed in the wild
+    // after a token was copy-pasted from a masked display: right length, wrong
+    // characters. One cheap request up front turns that into a clean demotion
+    // to the keyless stacks.
+    const configuredCesiumToken = import.meta.env.CESIUM_ION_TOKEN;
+    let cesiumToken = '';
+    if (configuredCesiumToken) {
+      try {
+        const probe = await fetch(
+          `https://api.cesium.com/v1/assets/2/endpoint?access_token=${encodeURIComponent(configuredCesiumToken)}`,
+          { signal: AbortSignal.timeout(8000) },
+        );
+        if (probe.ok) {
+          cesiumToken = configuredCesiumToken;
+          Cesium.Ion.defaultAccessToken = configuredCesiumToken;
+        } else {
+          console.warn(
+            `[Init] CESIUM_ION_TOKEN rejected by Cesium ion (HTTP ${probe.status}); `
+            + 'continuing on the keyless map stacks. Check the token value.',
+          );
+        }
+      } catch (error) {
+        // Unreachable ion (offline, blocked) is not proof of a bad token, but
+        // the stacks would be unusable either way, so treat it the same.
+        console.warn('[Init] Could not verify CESIUM_ION_TOKEN:', error?.message || error);
+      }
     }
 
     // Google Photorealistic 3D Tiles are OPTIONAL and metered. Absent a key the
