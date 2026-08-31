@@ -371,28 +371,31 @@ views.cameras = async () => {
 
   let filtered = cams;
   let shown = 0;
-  const PAGE = 60;
+  const PAGE = 48;
   const renderNext = () => {
     const slice = filtered.slice(shown, shown + PAGE);
     for (const c of slice) {
       const card = el('a', 'cam');
       card.href = c.open; card.target = '_blank'; card.rel = 'noopener noreferrer';
+      card.title = `${c.name}${c.place ? ' — ' + c.place : ''}`;
+      // The LIVE marker sits behind everything, so a tile is complete before —
+      // and whether or not — a thumbnail ever arrives.
+      card.append(el('div', 'live', '◉ LIVE'));
       if (c.thumb) {
-        const img = el('img'); img.loading = 'lazy'; img.src = c.thumb;
-        // A thumbnail that never loads becomes the LIVE placeholder rather than
-        // a broken-image icon.
-        img.onerror = () => { img.remove(); card.style.display = 'flex'; card.style.alignItems = 'center'; card.style.justifyContent = 'center'; card.insertAdjacentHTML('afterbegin', '<span style="color:var(--accent);font-size:11px;letter-spacing:.1em">▶ LIVE</span>'); };
+        const img = el('img'); img.loading = 'lazy'; img.decoding = 'async'; img.alt = '';
+        // Drop a thumbnail that fails so the LIVE tile shows through cleanly,
+        // instead of a broken-image glyph.
+        img.onerror = () => img.remove();
+        img.src = c.thumb;
         card.append(img);
-      } else {
-        card.style.display = 'flex'; card.style.alignItems = 'center'; card.style.justifyContent = 'center';
-        card.innerHTML = '<span style="color:var(--accent);font-size:11px;letter-spacing:.1em">▶ LIVE</span>';
       }
-      card.append(el('div', 'cc', esc(c.cc)));
+      if (c.cc) card.append(el('div', 'cc', esc(c.cc)));
       card.append(el('div', 'lab', esc(c.name)));
       grid.append(card);
     }
     shown += slice.length;
     $('#cam-count').textContent = `${shown.toLocaleString()} / ${filtered.length.toLocaleString()} shown`;
+    $('#cam-more').style.display = shown >= filtered.length ? 'none' : '';
   };
   const applyFilter = () => {
     const q = ($('#cam-search').value || '').trim().toLowerCase();
