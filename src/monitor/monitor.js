@@ -297,42 +297,115 @@ views.markets = async () => {
 };
 
 // ── CAMERAS (all feeds) ──────────────────────────────────────────────────────
+//
+// Merges TWO catalogs into one browsable directory:
+//   OSIRIS  — ~15,700 cameras worldwide (6,000+ in Europe), same-origin via the
+//             /osiris proxy. The bulk of the coverage.
+//   GLOBE   — ~1,650 cameras whose frames this app proxies live.
+// A grid of 15k live video players would crush any browser, so this is a
+// filterable, searchable DIRECTORY: it shows a live thumbnail wherever one can
+// be loaded from a plain <img>, and a click-to-open LIVE card otherwise —
+// exactly how large camera walls on monitoring sites present their counts.
 views.cameras = async () => {
   const root = $('#view-cameras');
-  root.innerHTML = '<div class="controls"><span class="muted">Every public camera in the catalog. Frames refresh on load; click one to open it.</span> <select id="cam-country"><option value="">All countries</option></select> <button id="cam-more">Load more</button> <span id="cam-count" class="muted"></span></div>';
+  root.innerHTML = '<div class="controls">'
+    + '<span class="muted" id="cam-status">Loading camera catalog…</span>'
+    + '<input id="cam-search" placeholder="search name / city…" style="background:var(--panel);border:1px solid var(--line);color:#fff;font-family:inherit;font-size:11px;padding:6px 10px;min-width:180px" />'
+    + '<select id="cam-country"><option value="">All countries</option></select>'
+    + '<button id="cam-more">Load more</button> <span id="cam-count" class="muted"></span></div>';
   const grid = el('div', 'grid cols-cams'); root.append(grid);
-  let sources = [];
+
+  // Fetch both catalogs in parallel; either can fail without emptying the view.
+  const [osiris, globe] = await Promise.all([
+    getJson('/osiris/api/cctv', 120000).catch(() => null),
+    getJson('/api/cctv/sources', 90000).catch(() => null),
+  ]);
+
+  const cams = [];
+  // OSIRIS catalog.
+  const oList = osiris && (osiris.cameras || (Array.isArray(osiris) ? osiris : []));
+  for (const c of oList || []) {
+    if (!c || !c.id) continue;
+    const type = String(c.stream_type || '').toLowerCase();
+    // Only jpg/mjpeg can be shown by a bare <img>; everything else opens on click.
+    const thumb = (type === 'jpg' || type === 'mjpeg') ? c.stream_url : null;
+    cams.push({
+      id: `osiris:${c.id}`,
+      name: c.name || c.id,
+      place: [c.city, c.country].filter(Boolean).join(', '),
+      cc: c.country || '',
+      thumb,
+      open: c.stream_url || `/osiris`,
+    });
+  }
+  // Globe catalog (live proxied frames).
+  const gList = globe && (Array.isArray(globe) ? globe : (globe.sources || []));
+  for (const s of gList || []) {
+    if (!s || !s.id) continue;
+    const frame = `/api/cctv/frame/${encodeURIComponent(s.id)}`;
+    cams.push({
+      id: `globe:${s.id}`,
+      name: s.name || s.id,
+      place: [s.city, (s.cityId || '').toUpperCase()].filter(Boolean).join(', '),
+      cc: (s.cityId || '').toUpperCase(),
+      thumb: frame,
+      open: frame,
+    });
+  }
+
+  if (!cams.length) { grid.innerHTML = '<div class="err">No camera catalog available.</div>'; return; }
+
+  // Cameras with a loadable live thumbnail lead the grid; click-to-open LIVE
+  // cards follow. A stable secondary sort by id keeps the order deterministic.
+  cams.sort((a, b) => (b.thumb ? 1 : 0) - (a.thumb ? 1 : 0) || a.id.localeCompare(b.id));
+
+  // Country dropdown, most-populous first.
+  const sel = $('#cam-country');
+  const byCc = {};
+  for (const c of cams) { const k = c.cc || '?'; byCc[k] = (byCc[k] || 0) + 1; }
+  for (const [cc, n] of Object.entries(byCc).sort((a, b) => b[1] - a[1])) {
+    if (!cc || cc === '?') continue;
+    const o = el('option'); o.value = cc; o.textContent = `${cc} (${n})`; sel.append(o);
+  }
+  $('#cam-status').textContent = `${cams.length.toLocaleString()} cameras worldwide`;
+
+  let filtered = cams;
   let shown = 0;
   const PAGE = 60;
-  try {
-    const d = await getJson('/api/cctv/sources', 60000);
-    sources = Array.isArray(d) ? d : (d.sources || []);
-  } catch { grid.innerHTML = '<div class="err">Camera catalog unavailable.</div>'; return; }
-  // Country filter
-  const sel = $('#cam-country');
-  const countries = [...new Set(sources.map((s) => (s.cityId || '').toUpperCase()).filter(Boolean))].sort();
-  for (const c of countries) { const o = el('option'); o.value = c; o.textContent = c; sel.append(o); }
-  let filtered = sources;
-  const frameUrl = (s) => `/api/cctv/frame/${encodeURIComponent(s.id)}`;
   const renderNext = () => {
     const slice = filtered.slice(shown, shown + PAGE);
-    for (const s of slice) {
-      const cam = el('a', 'cam'); cam.href = frameUrl(s); cam.target = '_blank'; cam.rel = 'noopener noreferrer';
-      const img = el('img'); img.loading = 'lazy'; img.src = frameUrl(s);
-      img.onerror = () => { cam.style.display = 'none'; };
-      cam.append(img);
-      cam.append(el('div', 'cc', esc((s.cityId || '').toUpperCase())));
-      cam.append(el('div', 'lab', esc(s.name || s.id)));
-      grid.append(cam);
+    for (const c of slice) {
+      const card = el('a', 'cam');
+      card.href = c.open; card.target = '_blank'; card.rel = 'noopener noreferrer';
+      if (c.thumb) {
+        const img = el('img'); img.loading = 'lazy'; img.src = c.thumb;
+        // A thumbnail that never loads becomes the LIVE placeholder rather than
+        // a broken-image icon.
+        img.onerror = () => { img.remove(); card.style.display = 'flex'; card.style.alignItems = 'center'; card.style.justifyContent = 'center'; card.insertAdjacentHTML('afterbegin', '<span style="color:var(--accent);font-size:11px;letter-spacing:.1em">▶ LIVE</span>'); };
+        card.append(img);
+      } else {
+        card.style.display = 'flex'; card.style.alignItems = 'center'; card.style.justifyContent = 'center';
+        card.innerHTML = '<span style="color:var(--accent);font-size:11px;letter-spacing:.1em">▶ LIVE</span>';
+      }
+      card.append(el('div', 'cc', esc(c.cc)));
+      card.append(el('div', 'lab', esc(c.name)));
+      grid.append(card);
     }
     shown += slice.length;
-    $('#cam-count').textContent = `${shown} / ${filtered.length} shown`;
+    $('#cam-count').textContent = `${shown.toLocaleString()} / ${filtered.length.toLocaleString()} shown`;
+  };
+  const applyFilter = () => {
+    const q = ($('#cam-search').value || '').trim().toLowerCase();
+    const cc = sel.value;
+    filtered = cams.filter((c) =>
+      (!cc || c.cc === cc)
+      && (!q || `${c.name} ${c.place}`.toLowerCase().includes(q)));
+    shown = 0; grid.innerHTML = ''; renderNext();
   };
   $('#cam-more').addEventListener('click', renderNext);
-  sel.addEventListener('change', () => {
-    filtered = sel.value ? sources.filter((s) => (s.cityId || '').toUpperCase() === sel.value) : sources;
-    shown = 0; grid.innerHTML = ''; renderNext();
-  });
+  sel.addEventListener('change', applyFilter);
+  let searchTimer = null;
+  $('#cam-search').addEventListener('input', () => { clearTimeout(searchTimer); searchTimer = setTimeout(applyFilter, 250); });
   renderNext();
 };
 

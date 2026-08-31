@@ -36,7 +36,7 @@ entirely on the same free public feeds those sites use:
 | **SITUATION** | monitor-the-situation | Severity-ranked global events (GDACS disasters + EMSC seismic), each linking its source and locatable on the globe |
 | **THEATER** | war.direct | Military ADS-B traffic (adsb.lol), a conflict news wire, and a live report card |
 | **MARKETS** | *(new, the 6th board)* | Crypto (CoinGecko), precious metals (gold-api), indices & commodities (Yahoo Finance), FX (Frankfurter/ECB), market news |
-| **CAMERAS** | — | Every public camera in the catalog (~1,650), filterable by country |
+| **CAMERAS** | — | Every public camera the app can reach — ~19,500 worldwide (6,000+ in Europe) merging the OSIRIS + globe catalogs, searchable and filterable by country |
 
 Every panel reads the app's own keyless proxies and **fails soft**: a dead feed
 shows an error line, never a blank board. All data sources are free and keyless
