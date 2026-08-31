@@ -20,6 +20,8 @@ import {
   formatPrice, formatChange, changeDirection, formatCompact,
   relativeTime, severityScore, severityTier,
 } from './monitorFormat.js';
+import 'leaflet/dist/leaflet.css';
+import { createDarkMap, addEventMarker, CATEGORY_COLOR, L } from './monitorMap.js';
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const el = (tag, cls, html) => {
@@ -65,170 +67,191 @@ function selectView(name) {
   try { history.replaceState(null, '', `?view=${name}`); } catch { /* file:// */ }
 }
 
-// ── WIRE (world-monitor) ─────────────────────────────────────────────────────
+// ── WIRE (world-monitor.com) — world map + event bubbles + news ticker ───────
+//
+// Rebuilt to match world-monitor's layout: a full-bleed dark world map with
+// colour-coded event markers (quakes, disasters, fires, military flights), a
+// category legend to toggle them, a side WIRE feed and a scrolling news ticker.
 views.wire = async () => {
   const root = $('#view-wire');
-  root.innerHTML = '';
-  const grid = el('div', 'grid cols-2');
-  const feed = el('div', 'card'); feed.append(el('h3', null, 'Global News Wire'));
-  const feedBody = el('div', null, '<div class="loading">Loading wire…</div>'); feed.append(feedBody);
-  const side = el('div', 'grid');
-  const stats = el('div', 'card'); stats.append(el('h3', null, 'Live Signals'));
-  const statsBody = el('div', 'grid cols-4'); statsBody.style.gap = '4px';
-  statsBody.innerHTML = '<div class="loading">…</div>'; stats.append(statsBody);
-  const preds = el('div', 'card'); preds.append(el('h3', null, 'Prediction Markets'));
-  const predsBody = el('div', null, '<div class="loading">Loading…</div>'); preds.append(predsBody);
-  side.append(stats, preds);
-  grid.append(feed, side); root.append(grid);
-
-  // News wire
-  try {
-    const d = await getJson('/api/monitor/wire?q=breaking%20OR%20conflict%20OR%20crisis');
-    feedBody.innerHTML = '';
-    for (const a of (d.articles || []).slice(0, 30)) {
-      const item = el('a', 'wire-item');
-      item.href = a.url || '#'; item.target = '_blank'; item.rel = 'noopener noreferrer';
-      item.innerHTML = `<div class="t">${esc(a.title)}</div><div class="m"><span>${esc(a.domain || '')}</span><span>${esc(relativeTime(a.seenAt))}</span></div>`;
-      feedBody.append(item);
-    }
-    if (!feedBody.children.length) feedBody.innerHTML = '<div class="err">No wire items available.</div>';
-    feed.querySelector('h3').innerHTML = `Global News Wire <span class="src">via ${esc(d.source || '')}</span>`;
-  } catch { feedBody.innerHTML = '<div class="err">News wire unavailable.</div>'; }
-
-  // Live signals (quakes, fires, flights, vessels)
-  const signal = async (label, url, count) => {
-    try { const d = await getJson(url, 40000); return { label, n: count(d) }; }
-    catch { return { label, n: '—' }; }
+  root.innerHTML = `<div class="mapwrap">
+      <div class="map" id="wire-map"></div>
+      <div class="map-legend" id="wire-legend"></div>
+      <div class="map-side"><h3>THE WIRE · LIVE HEADLINES</h3><div id="wire-feed"><div class="muted" style="padding:12px">Loading…</div></div></div>
+      <div class="ticker"><span class="live">● LIVE</span><div class="track" id="wire-ticker"></div></div>
+    </div>`;
+  const map = createDarkMap($('#wire-map'), { center: [25, 15], zoom: 2 });
+  const layers = {
+    quake: L.layerGroup().addTo(map),
+    disaster: L.layerGroup().addTo(map),
+    fire: L.layerGroup().addTo(map),
+    flight: L.layerGroup().addTo(map),
   };
-  Promise.all([
-    signal('Quakes 24h', '/api/situation/emsc', (d) => (d.features || []).length),
-    signal('Disasters', '/api/situation/gdacs', (d) => (d.features || []).length),
-    signal('Flights', '/api/opensky?lat=48.2&lon=16.37', (d) => (d.states || d.aircraft || []).length),
-    signal('Fires', '/api/firms', (d) => (d.sources || []).reduce((s, x) => s + (x.count || 0), 0)),
-  ]).then((rows) => {
-    statsBody.innerHTML = '';
-    for (const r of rows) {
-      const s = el('div', 'stat');
-      s.innerHTML = `<div class="n">${typeof r.n === 'number' ? r.n.toLocaleString() : r.n}</div><div class="l">${esc(r.label)}</div>`;
-      statsBody.append(s);
-    }
-  });
+  const counts = { quake: 0, disaster: 0, fire: 0, flight: 0 };
 
-  // Predictions
-  try {
-    const d = await getJson('/api/monitor/predictions');
-    predsBody.innerHTML = '';
-    for (const m of (d.markets || []).slice(0, 8)) {
-      const top = [...m.outcomes].sort((a, b) => b.probability - a.probability)[0];
-      const pct = Math.round((top?.probability || 0) * 100);
-      const p = el('div', 'pred');
-      p.innerHTML = `<div class="q">${esc(m.question)}</div>
-        <div style="display:flex;justify-content:space-between;font-size:11px;margin-top:4px">
-          <span class="muted">${esc(top?.name || '')}</span><span class="accent" style="color:var(--accent)">${pct}%</span></div>
-        <div class="bar"><i style="width:${pct}%"></i></div>`;
-      predsBody.append(p);
+  // Quakes (EMSC) + disasters (GDACS) share the situation feeds.
+  getJson('/api/situation/emsc', 60000).then((d) => {
+    for (const f of d.features || []) {
+      const c = f.geometry?.coordinates; const p = f.properties || {};
+      if (!c) continue;
+      addEventMarker(map, c[1], c[0], { category: 'quake', radius: 4 + Math.min(8, (p.magnitude || 0)), label: p.name });
+      counts.quake++;
     }
-    if (!predsBody.children.length) predsBody.innerHTML = '<div class="muted">No active markets.</div>';
-  } catch { predsBody.innerHTML = '<div class="err">Predictions unavailable.</div>'; }
+    layers.quake.eachLayer && renderLegend();
+  }).catch(() => {});
+  getJson('/api/situation/gdacs', 60000).then((d) => {
+    for (const f of d.features || []) {
+      const c = f.geometry?.coordinates; const p = f.properties || {};
+      if (!c) continue;
+      const m = addEventMarker(map, c[1], c[0], { category: 'disaster', radius: 8, html: `<b>${esc(p.name || '')}</b><br>${esc(p.alertLevel || '')} · ${esc(p.country || '')}` });
+      layers.disaster.addLayer(m); counts.disaster++;
+    }
+    renderLegend();
+  }).catch(() => {});
+  getJson('/api/adsblol/mil', 60000).then((d) => {
+    for (const a of (d.ac || []).slice(0, 400)) {
+      if (!Number.isFinite(a.lat) || !Number.isFinite(a.lon)) continue;
+      const m = addEventMarker(map, a.lat, a.lon, { category: 'flight', radius: 3, label: `${a.flight || a.hex || ''} ${a.t || ''}`.trim() });
+      layers.flight.addLayer(m); counts.flight++;
+    }
+    renderLegend();
+  }).catch(() => {});
+
+  function renderLegend() {
+    const items = [
+      ['quake', 'Earthquakes'], ['disaster', 'Disasters'],
+      ['fire', 'Fires'], ['flight', 'Military flights'],
+    ];
+    $('#wire-legend').innerHTML = items.map(([k, lbl]) =>
+      `<div class="row" data-cat="${k}"><span class="dot" style="background:${CATEGORY_COLOR[k]}"></span>${lbl} <b style="margin-left:auto;color:${CATEGORY_COLOR[k]}">${counts[k] || 0}</b></div>`).join('');
+    for (const row of $('#wire-legend').querySelectorAll('.row')) {
+      row.addEventListener('click', () => {
+        const k = row.dataset.cat; const on = row.classList.toggle('off');
+        if (on) map.removeLayer(layers[k]); else map.addLayer(layers[k]);
+      });
+    }
+  }
+  renderLegend();
+
+  // Side feed + ticker from the wire feed.
+  getJson('/api/monitor/wire?q=breaking OR conflict OR crisis', 30000).then((d) => {
+    const arts = (d.articles || []).slice(0, 40);
+    $('#wire-feed').innerHTML = arts.map((a) =>
+      `<a class="feeditem" href="${esc(a.url)}" target="_blank" rel="noopener noreferrer" style="display:block;color:#fff;text-decoration:none">
+        ${esc(a.title)}<div class="meta">${esc(a.domain || a.source || '')} · ${esc((a.country || '').toUpperCase())}</div></a>`).join('') || '<div class="muted" style="padding:12px">No headlines.</div>';
+    $('#wire-ticker').innerHTML = arts.slice(0, 25).map((a) =>
+      `<a href="${esc(a.url)}" target="_blank" rel="noopener noreferrer">${esc(a.title)}</a>`).join('');
+  }).catch(() => { $('#wire-feed').innerHTML = '<div class="err" style="padding:12px">Wire unavailable.</div>'; });
+
+  setTimeout(() => map.invalidateSize(), 200);
 };
 
-// ── SITUATION (monitor-the-situation) ────────────────────────────────────────
+// ── SITUATION (monitor-the-situation.com) — map + severity event feed ────────
+//
+// Rebuilt to match monitor-the-situation: a dark map centre with a left
+// severity-ranked event FEED. Clicking a feed item flies the map to it. Events
+// come from GDACS (disasters) and EMSC (quakes), severity-ordered.
 views.situation = async () => {
   const root = $('#view-situation');
-  root.innerHTML = '<div class="controls"><span class="muted">Severity-ranked global events from GDACS + EMSC. Each links its source.</span></div>';
-  const list = el('div'); list.innerHTML = '<div class="loading">Clustering events…</div>'; root.append(list);
-  try {
-    const [gd, eq] = await Promise.all([
-      getJson('/api/situation/gdacs', 40000).catch(() => ({ features: [] })),
-      getJson('/api/situation/emsc', 40000).catch(() => ({ features: [] })),
-    ]);
-    const events = [];
-    for (const f of gd.features || []) {
-      const p = f.properties || {};
-      events.push({
-        title: p.name || 'Event', kind: p.eventType, alertLevel: p.alertLevel,
-        where: p.country || '', when: p.fromDate,
-        coord: f.geometry?.coordinates,
-      });
-    }
-    for (const f of eq.features || []) {
-      const p = f.properties || {};
-      events.push({
-        title: p.name || 'Earthquake', kind: 'earthquake', magnitude: p.magnitude,
-        where: '', when: p.time, coord: f.geometry?.coordinates,
-      });
-    }
-    for (const e of events) { e.score = severityScore(e); }
-    events.sort((a, b) => b.score - a.score);
-    list.innerHTML = '';
-    for (const e of events.slice(0, 40)) {
-      const tier = severityTier(e.score);
-      const card = el('div', `ev ${tier.tier}`);
-      const coord = Array.isArray(e.coord) ? `${e.coord[1]?.toFixed(2)}, ${e.coord[0]?.toFixed(2)}` : '';
-      const map = coord ? `<a href="/?lat=${e.coord[1]}&lon=${e.coord[0]}" style="color:var(--accent)">view on globe →</a>` : '';
-      card.innerHTML = `<div class="head"><span class="badge">${tier.label}</span><span class="muted">${e.score}</span>
-        <span class="t">${esc(e.title)}</span></div>
-        <div class="m">${esc(e.kind || '')} ${e.where ? '· ' + esc(e.where) : ''} ${e.when ? '· ' + esc(relativeTime(e.when)) + ' ago' : ''} ${coord ? '· ' + coord : ''} ${map}</div>`;
-      list.append(card);
-    }
-    if (!list.children.length) list.innerHTML = '<div class="muted">No active events.</div>';
-  } catch { list.innerHTML = '<div class="err">Event feeds unavailable.</div>'; }
+  root.innerHTML = `<div class="mapwrap">
+      <div class="map" id="sit-map"></div>
+      <div class="map-side" style="left:0;right:auto;border-left:0;border-right:1px solid var(--line);width:360px">
+        <h3>FEED · SEVERITY-RANKED EVENTS</h3><div id="sit-feed"><div class="muted" style="padding:12px">Loading…</div></div>
+      </div>
+    </div>`;
+  const map = createDarkMap($('#sit-map'), { center: [40, 20], zoom: 3 });
+  setTimeout(() => map.invalidateSize(), 200);
+
+  const events = [];
+  const [gd, em] = await Promise.all([
+    getJson('/api/situation/gdacs', 60000).catch(() => null),
+    getJson('/api/situation/emsc', 60000).catch(() => null),
+  ]);
+  const KIND = { EQ: 'Earthquake', TC: 'Cyclone', FL: 'Flood', VO: 'Volcano', WF: 'Wildfire', DR: 'Drought' };
+  for (const f of (gd?.features) || []) {
+    const c = f.geometry?.coordinates; const p = f.properties || {};
+    if (!c) continue;
+    const sev = String(p.alertLevel).toLowerCase() === 'red' ? 90 : String(p.alertLevel).toLowerCase() === 'orange' ? 60 : 40;
+    events.push({ lat: c[1], lon: c[0], title: p.name || p.eventType, cat: KIND[p.eventType] || 'Alert', sev, meta: `${p.country || ''} · ${p.alertLevel || ''}`, tier: sev >= 80 ? 'HIGH' : 'MODERATE', color: '#ff5a1f' });
+  }
+  for (const f of (em?.features) || []) {
+    const c = f.geometry?.coordinates; const p = f.properties || {};
+    if (!c || (p.magnitude || 0) < 4) continue;
+    const sev = Math.round((p.magnitude || 0) * 10);
+    events.push({ lat: c[1], lon: c[0], title: p.name || `M${p.magnitude}`, cat: 'Earthquake', sev, meta: `depth ${Math.round(p.depthKm || 0)} km`, tier: (p.magnitude || 0) >= 6 ? 'HIGH' : 'MODERATE', color: '#ffd21f' });
+  }
+  events.sort((a, b) => b.sev - a.sev);
+
+  const markers = [];
+  for (const e of events) {
+    markers.push(addEventMarker(map, e.lat, e.lon, { category: e.cat === 'Earthquake' ? 'quake' : 'disaster', radius: 5 + Math.min(9, e.sev / 12), html: `<b>${esc(e.title)}</b><br>${esc(e.meta)}` }));
+  }
+  $('#sit-feed').innerHTML = events.slice(0, 80).map((e, i) =>
+    `<div class="feeditem" data-i="${i}">
+      <span class="badge" style="background:${e.color};color:#000">${e.tier} ${e.sev}</span>${esc(e.cat)} · ${esc(e.title)}
+      <div class="meta">${esc(e.meta)}</div></div>`).join('') || '<div class="muted" style="padding:12px">No active events.</div>';
+  for (const item of $('#sit-feed').querySelectorAll('.feeditem')) {
+    item.addEventListener('click', () => {
+      const e = events[Number(item.dataset.i)];
+      map.flyTo([e.lat, e.lon], 6); markers[Number(item.dataset.i)]?.openPopup();
+    });
+  }
 };
 
-// ── THEATER (war.direct) ─────────────────────────────────────────────────────
+// ── THEATER (war.direct) — live TV player + channels + report card + wire ────
+//
+// Rebuilt to match war.direct: a large live-TV player centre with a channel
+// switcher, a right conflict-news feed, a breaking ticker and a war report
+// card. TV + news + stats fused on one screen.
 views.theater = async () => {
   const root = $('#view-theater');
-  root.innerHTML = '';
-  const grid = el('div', 'grid cols-2');
-  const left = el('div', 'card'); left.append(el('h3', null, 'Military Flights (ADS-B)'));
-  const milBody = el('div', null, '<div class="loading">Loading military traffic…</div>'); left.append(milBody);
-  const right = el('div', 'grid');
-  const card = el('div', 'card'); card.append(el('h3', null, 'Report Card'));
-  const cardBody = el('div', 'grid cols-4'); cardBody.style.gap = '4px';
-  cardBody.innerHTML = '<div class="loading">…</div>'; card.append(cardBody);
-  const news = el('div', 'card'); news.append(el('h3', null, 'Conflict Wire'));
-  const newsBody = el('div', null, '<div class="loading">Loading…</div>'); news.append(newsBody);
-  right.append(card, news);
-  grid.append(left, right); root.append(grid);
+  root.innerHTML = `<div class="ticker" style="position:relative;height:26px;margin-bottom:8px"><span class="live">● BREAKING</span><div class="track" id="thr-ticker"></div></div>
+    <div class="theater">
+      <div class="stage">
+        <div class="player" id="thr-player"></div>
+        <div class="channels" id="thr-channels"></div>
+      </div>
+      <div class="side" style="padding:10px">
+        <div class="rc" id="thr-rc"></div>
+        <h3 style="margin:0 0 6px;font-size:11px;letter-spacing:.14em;color:var(--accent)">CONFLICT WIRE</h3>
+        <div id="thr-wire"><div class="muted">Loading…</div></div>
+      </div>
+    </div>`;
 
-  let milCount = 0;
-  try {
-    const d = await getJson('/api/adsblol/mil', 40000);
-    const ac = d.ac || d.aircraft || [];
-    milCount = ac.length;
-    milBody.innerHTML = '';
-    for (const a of ac.slice(0, 30)) {
-      const r = el('div', 'row');
-      const call = a.flight || a.r || a.hex || '—';
-      const alt = Number.isFinite(Number(a.alt_baro)) ? `${a.alt_baro} ft` : (a.alt_baro || '');
-      r.innerHTML = `<div class="sym"><span>${esc(String(call).trim())}</span><span class="name">${esc(a.t || a.type || '')}</span></div>
-        <div class="price">${esc(alt)} <span class="chg muted">${esc(a.squawk || '')}</span></div>`;
-      milBody.append(r);
-    }
-    if (!milBody.children.length) milBody.innerHTML = '<div class="muted">No military contacts right now.</div>';
-  } catch { milBody.innerHTML = '<div class="err">Military feed unavailable.</div>'; }
+  // Channels from the streams feed.
+  const sd = await getJson('/api/monitor/streams').catch(() => null);
+  const streams = (sd?.streams) || [];
+  const player = $('#thr-player');
+  const setChannel = (c) => {
+    player.innerHTML = `<iframe src="${esc(c.embed)}" allow="autoplay; encrypted-media; picture-in-picture" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>`;
+    for (const b of $('#thr-channels').querySelectorAll('.ch')) b.classList.toggle('on', b.dataset.id === c.ytId);
+  };
+  $('#thr-channels').innerHTML = streams.map((c) =>
+    `<button class="ch" data-id="${esc(c.ytId)}">${esc(c.name)}</button>`).join('');
+  for (const b of $('#thr-channels').querySelectorAll('.ch')) {
+    b.addEventListener('click', () => setChannel(streams.find((s) => s.ytId === b.dataset.id)));
+  }
+  if (streams.length) setChannel(streams[0]);
+  else player.innerHTML = '<div class="err" style="padding:20px">Live TV unavailable.</div>';
 
-  // Report card
-  const rc = async (label, url, count) => { try { return { label, n: count(await getJson(url, 40000)) }; } catch { return { label, n: '—' }; } };
-  Promise.all([
-    Promise.resolve({ label: 'Mil Aircraft', n: milCount }),
-    rc('Quakes', '/api/situation/emsc', (d) => (d.features || []).length),
-    rc('Disasters', '/api/situation/gdacs', (d) => (d.features || []).length),
-    rc('Fires', '/api/firms', (d) => (d.sources || []).reduce((s, x) => s + (x.count || 0), 0)),
-  ]).then((rows) => {
-    cardBody.innerHTML = '';
-    for (const r of rows) { const s = el('div', 'stat'); s.innerHTML = `<div class="n">${typeof r.n === 'number' ? r.n.toLocaleString() : r.n}</div><div class="l">${esc(r.label)}</div>`; cardBody.append(s); }
-  });
+  // Report card from live signals.
+  getJson('/api/monitor/threat', 60000).then((d) => {
+    const s = d.signals || {};
+    $('#thr-rc').innerHTML = [
+      ['MIL AIRCRAFT', s.milAircraft], ['QUAKES 24H', s.quakes],
+      ['DISASTERS', s.disasters], ['THREAT', d.level ? `L${d.level}` : '—'],
+    ].map(([k, v]) => `<div><div class="n">${typeof v === 'number' ? v.toLocaleString() : esc(v)}</div><div class="k">${k}</div></div>`).join('');
+  }).catch(() => { $('#thr-rc').innerHTML = ''; });
 
-  try {
-    const d = await getJson('/api/monitor/wire?q=war%20OR%20strike%20OR%20military');
-    newsBody.innerHTML = '';
-    for (const a of (d.articles || []).slice(0, 12)) {
-      const item = el('a', 'wire-item'); item.href = a.url || '#'; item.target = '_blank'; item.rel = 'noopener noreferrer';
-      item.innerHTML = `<div class="t">${esc(a.title)}</div><div class="m"><span>${esc(a.domain || '')}</span><span>${esc(relativeTime(a.seenAt))}</span></div>`;
-      newsBody.append(item);
-    }
-  } catch { newsBody.innerHTML = '<div class="err">Conflict wire unavailable.</div>'; }
+  // Conflict wire + breaking ticker.
+  getJson('/api/monitor/wire?q=conflict OR strike OR military OR ceasefire', 30000).then((d) => {
+    const arts = (d.articles || []).slice(0, 30);
+    $('#thr-wire').innerHTML = arts.map((a) =>
+      `<a class="feeditem" href="${esc(a.url)}" target="_blank" rel="noopener noreferrer" style="display:block;color:#fff;text-decoration:none">
+        ${esc(a.title)}<div class="meta">${esc(a.domain || a.source || '')}</div></a>`).join('') || '<div class="muted">No conflict headlines.</div>';
+    $('#thr-ticker').innerHTML = arts.slice(0, 20).map((a) =>
+      `<a href="${esc(a.url)}" target="_blank" rel="noopener noreferrer" style="color:rgba(255,255,255,.85);text-decoration:none;margin-right:36px">${esc(a.title)}</a>`).join('');
+  }).catch(() => { $('#thr-wire').innerHTML = '<div class="err">Wire unavailable.</div>'; });
 };
 
 // ── MARKETS (the 6th board) ──────────────────────────────────────────────────

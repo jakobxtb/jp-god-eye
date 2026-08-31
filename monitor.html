@@ -108,6 +108,43 @@
     .l1b{background:#63d6c0} .l2b{background:#c8e64a} .l3b{background:#ffd21f} .l4b{background:#ffa41b} .l5b{background:#ff2d2d}
     .obk { display:flex; justify-content:space-between; padding:7px 10px; border-bottom:1px solid var(--line); font-size:12px; }
     .obk b { color:var(--accent); }
+    /* ── Map-centric views (world-monitor / monitor-the-situation) ── */
+    .mapwrap { position:relative; height:calc(100vh - 190px); min-height:420px; }
+    .mapwrap .map { position:absolute; inset:0; background:#05080c; }
+    .leaflet-container { background:#05080c; font-family:inherit; }
+    .map-legend { position:absolute; top:12px; left:12px; z-index:500; background:rgba(6,10,14,.9);
+                  border:1px solid var(--line); padding:8px 10px; font-size:10px; }
+    .map-legend .row { display:flex; align-items:center; gap:6px; padding:2px 0; cursor:pointer; opacity:.9; }
+    .map-legend .row.off { opacity:.35; }
+    .map-legend .dot { width:9px; height:9px; border-radius:50%; }
+    .map-side { position:absolute; top:0; right:0; bottom:0; width:340px; max-width:44vw; z-index:500;
+                background:rgba(6,10,14,.94); border-left:1px solid var(--line); overflow-y:auto; }
+    .map-side h3 { margin:0; padding:10px 12px; font-size:11px; letter-spacing:.14em; color:var(--accent);
+                   border-bottom:1px solid var(--line); position:sticky; top:0; background:rgba(6,10,14,.98); }
+    .feeditem { padding:9px 12px; border-bottom:1px solid var(--line); cursor:pointer; font-size:12px; }
+    .feeditem:hover { background:rgba(120,200,255,.06); }
+    .feeditem .meta { font-size:9.5px; color:rgba(255,255,255,.4); margin-top:3px; }
+    .badge { display:inline-block; font-size:8.5px; padding:1px 5px; margin-right:5px; letter-spacing:.06em; }
+    .ticker { position:absolute; left:0; right:0; bottom:0; z-index:600; height:26px; overflow:hidden;
+              background:rgba(0,0,0,.85); border-top:1px solid var(--line); display:flex; align-items:center; }
+    .ticker .live { background:#ff2d2d; color:#fff; font-size:9px; padding:2px 8px; margin:0 8px; letter-spacing:.1em; }
+    .ticker .track { white-space:nowrap; animation:tick 90s linear infinite; font-size:11px; color:rgba(255,255,255,.8); }
+    .ticker a { color:rgba(255,255,255,.8); text-decoration:none; margin-right:36px; }
+    @keyframes tick { from{transform:translateX(100vw)} to{transform:translateX(-100%)} }
+    /* ── war.direct THEATER: TV-centric ── */
+    .theater { display:grid; grid-template-columns:1fr 320px; gap:10px; height:calc(100vh - 190px); min-height:420px; }
+    .theater .stage { display:flex; flex-direction:column; min-width:0; }
+    .theater .player { flex:1; background:#000; border:1px solid var(--line); position:relative; }
+    .theater .player iframe { position:absolute; inset:0; width:100%; height:100%; border:0; }
+    .theater .channels { display:flex; gap:4px; overflow-x:auto; padding:8px 0; }
+    .theater .ch { flex:none; padding:6px 12px; font-size:10px; letter-spacing:.06em; cursor:pointer;
+                   background:var(--panel); border:1px solid var(--line); color:rgba(255,255,255,.7); white-space:nowrap; }
+    .theater .ch.on { color:var(--accent); border-color:var(--accent); background:rgba(120,200,255,.1); }
+    .theater .side { border:1px solid var(--line); background:var(--panel); overflow-y:auto; }
+    .rc { display:grid; grid-template-columns:repeat(4,1fr); gap:1px; background:var(--line); margin-bottom:10px; }
+    .rc div { background:var(--bg); padding:12px 8px; text-align:center; }
+    .rc .n { font-size:22px; color:var(--accent); font-weight:700; }
+    .rc .k { font-size:8.5px; color:rgba(255,255,255,.45); letter-spacing:.08em; margin-top:3px; }
 </style>
 </head>
 <body>
