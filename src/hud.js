@@ -620,6 +620,13 @@ export class IntelHUD {
    */
   async _updateSummary(animate = false, force = false) {
     const fallbackText = this._composeSummary();
+    // Optional AI summary is off (no OpenAI key). Bail SYNCHRONOUSLY here —
+    // before the first await — so a burst of load-time calls can't each slip
+    // past an async guard and fire a 503 before the flag is set.
+    if (this._summaryEndpointDisabled) {
+      this._setSummaryText(fallbackText, animate);
+      return;
+    }
     if (!this._latestMetrics) {
       this._setSummaryText(fallbackText, animate);
       return;
@@ -650,6 +657,17 @@ export class IntelHUD {
       return;
     }
     if (this._summaryRequest) return;
+    // The AI HUD summary is optional. Once the server has told us it has no
+    // OpenAI key (503), stop calling it for the rest of the session: the key
+    // cannot appear mid-run, and retrying every tick floods the console with
+    // 503s that read like the app is broken. The deterministic fallback line
+    // already carries the summary in that case.
+    if (this._summaryEndpointDisabled) {
+      this._setSummaryText(fallbackText, false);
+      this._summaryDirty = false;
+      this._lastSummarySignature = signature;
+      return;
+    }
 
     if (force) this._setSummaryText(fallbackText, false);
     this._summaryDirty = false;
@@ -664,6 +682,14 @@ export class IntelHUD {
         body: JSON.stringify(context),
         signal: controller.signal,
       });
+      // 503 = the server has no OpenAI key. That is permanent for this
+      // session, so disable the endpoint here (from the real status code, not
+      // the error text) to stop the per-tick retry storm.
+      if (response.status === 503) {
+        this._summaryEndpointDisabled = true;
+        this._setSummaryText(fallbackText, animate);
+        return;
+      }
       const data = await response.json().catch(() => null);
       if (!response.ok || !data?.summary) {
         throw new Error(data?.error || `HTTP ${response.status}`);
@@ -672,9 +698,10 @@ export class IntelHUD {
       this._setSummaryText(data.summary, animate);
     } catch (error) {
       if (error?.name !== 'AbortError') {
+        // Transient error (timeout, network) — invalidate the signature so the
+        // next periodic tick retries. The no-key 503 case is handled above by
+        // disabling the endpoint outright.
         console.warn('[HUD] AI summary unavailable:', error);
-        // Invalidate the committed signature so the next periodic tick
-        // retries instead of sticking on the fallback line forever.
         this._lastSummarySignature = null;
         this._summaryDirty = true;
       }
