@@ -8564,6 +8564,249 @@ function servedInProduction(plugin) {
   return { ...plugin, configurePreviewServer: plugin.configureServer };
 }
 
+
+/**
+ * @file MONITOR dashboard proxies — the market, news-wire and prediction feeds
+ *       behind the WIRE / SITUATION / THEATER / MARKETS views.
+ *
+ * All upstreams are keyless and public. Each is fixed (no client-supplied URL),
+ * cached server-side with a per-feed TTL sized to how fast the data moves
+ * (prices seconds-to-minutes, news minutes), and serves its last good payload
+ * during an upstream blip instead of failing the panel. Nothing is fabricated:
+ * an unreachable feed returns an empty payload plus an `error` the UI shows.
+ *
+ * @module monitorProxy (in vite.config.js)
+ */
+const _monitorCache = new Map(); // key -> { at, ttl, value }
+
+/**
+ * Cached fetch for a monitor feed.
+ * @param {string} key Cache key.
+ * @param {number} ttlMs Freshness window for this feed.
+ * @param {() => Promise<any>} build Produces the payload.
+ * @returns {Promise<any>}
+ */
+async function serveMonitorFeed(key, ttlMs, build) {
+  const now = Date.now();
+  const hit = _monitorCache.get(key);
+  if (hit && now - hit.at <= ttlMs) return hit.value;
+  try {
+    const value = await build();
+    _monitorCache.set(key, { at: now, ttl: ttlMs, value });
+    return value;
+  } catch (error) {
+    if (hit) return { ...hit.value, stale: true };
+    return { error: String(error?.message || error) };
+  }
+}
+
+const monitorJson = async (url, { headers = {}, timeoutMs = 15000 } = {}) => {
+  const resp = await fetch(url, {
+    headers: { Accept: 'application/json', 'User-Agent': 'JP-GOD-EYE-monitor/1.0', ...headers },
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+  return resp.json();
+};
+
+/** Top cryptocurrencies by market cap (CoinGecko, keyless). */
+async function buildMonitorCrypto() {
+  const rows = await monitorJson(
+    'https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=25&page=1&price_change_percentage=24h',
+  );
+  const coins = (Array.isArray(rows) ? rows : []).map((c) => ({
+    id: c.id,
+    symbol: String(c.symbol || '').toUpperCase(),
+    name: c.name,
+    price: c.current_price,
+    change24h: c.price_change_percentage_24h,
+    marketCap: c.market_cap,
+    volume: c.total_volume,
+    image: c.image,
+  }));
+  return { coins, retrievedAt: new Date().toISOString() };
+}
+
+/** Spot precious-metal prices, USD/oz (gold-api.com, keyless). */
+async function buildMonitorMetals() {
+  const symbols = [['XAU', 'Gold'], ['XAG', 'Silver'], ['XPT', 'Platinum'], ['XPD', 'Palladium']];
+  const metals = [];
+  await Promise.all(symbols.map(async ([sym, label]) => {
+    try {
+      const d = await monitorJson(`https://api.gold-api.com/price/${sym}`);
+      if (Number.isFinite(Number(d?.price))) {
+        metals.push({ symbol: sym, name: label, price: Number(d.price), updatedAt: d.updatedAt || null });
+      }
+    } catch { /* one metal failing must not empty the panel */ }
+  }));
+  metals.sort((a, b) => symbols.findIndex((s) => s[0] === a.symbol) - symbols.findIndex((s) => s[0] === b.symbol));
+  return { metals, retrievedAt: new Date().toISOString() };
+}
+
+/** Major stock indices + commodities (Yahoo v8 chart per symbol, keyless). */
+async function buildMonitorIndices() {
+  // Yahoo's multi-quote endpoint now needs a crumb; the per-symbol chart
+  // endpoint does not, so one small request per symbol is the keyless path.
+  const symbols = [
+    ['^GSPC', 'S&P 500'], ['^IXIC', 'Nasdaq'], ['^DJI', 'Dow Jones'],
+    ['^GDAXI', 'DAX'], ['^FTSE', 'FTSE 100'], ['^N225', 'Nikkei 225'],
+    ['^VIX', 'VIX'], ['CL=F', 'Crude Oil'], ['GC=F', 'Gold Future'],
+  ];
+  const indices = [];
+  await Promise.all(symbols.map(async ([sym, label]) => {
+    try {
+      const d = await monitorJson(
+        `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?interval=1d&range=1d`,
+        { headers: { 'User-Agent': 'Mozilla/5.0' } },
+      );
+      const meta = d?.chart?.result?.[0]?.meta;
+      if (meta && Number.isFinite(Number(meta.regularMarketPrice))) {
+        const price = Number(meta.regularMarketPrice);
+        const prev = Number(meta.chartPreviousClose ?? meta.previousClose);
+        const changePct = Number.isFinite(prev) && prev !== 0 ? ((price - prev) / prev) * 100 : null;
+        indices.push({ symbol: sym, name: label, price, changePct });
+      }
+    } catch { /* one index failing must not empty the panel */ }
+  }));
+  const order = symbols.map((s) => s[0]);
+  indices.sort((a, b) => order.indexOf(a.symbol) - order.indexOf(b.symbol));
+  return { indices, retrievedAt: new Date().toISOString() };
+}
+
+/** USD exchange rates (Frankfurter / ECB, keyless). */
+async function buildMonitorFx() {
+  const d = await monitorJson('https://api.frankfurter.dev/v1/latest?base=USD&symbols=EUR,GBP,JPY,CHF,CNY,RUB,CAD,AUD');
+  const rates = Object.entries(d?.rates || {}).map(([code, rate]) => ({ code, rate }));
+  return { base: d?.base || 'USD', date: d?.date || null, rates };
+}
+
+/** Minimal RSS <item> extractor — title, link, source, pubDate. */
+function parseRssItems(xml) {
+  const items = [];
+  const blocks = String(xml || '').match(/<item[\s>][\s\S]*?<\/item>/g) || [];
+  const pick = (block, tag) => {
+    const m = block.match(new RegExp(`<${tag}[^>]*>([\\s\\S]*?)<\/${tag}>`, 'i'));
+    if (!m) return '';
+    return m[1]
+      .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')
+      .replace(/<[^>]+>/g, '')
+      .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+      .replace(/&#39;|&apos;/g, "'").replace(/&quot;/g, '"')
+      .trim();
+  };
+  for (const block of blocks) {
+    const rawTitle = pick(block, 'title');
+    // Google News formats titles as "Headline - Source"; split the source off.
+    const split = rawTitle.match(/^(.*?)\s+-\s+([^-]+)$/);
+    items.push({
+      title: split ? split[1].trim() : rawTitle,
+      url: pick(block, 'link'),
+      domain: pick(block, 'source') || (split ? split[2].trim() : ''),
+      seenAt: pick(block, 'pubDate'),
+      image: null,
+    });
+  }
+  return items;
+}
+
+/**
+ * Global news wire.
+ *
+ * PRIMARY: GDELT DOC 2.0 — geo-tagged, query-filterable, but IP-throttled and
+ * frequently unreachable from shared/datacenter addresses. FALLBACK: Google
+ * News RSS — reliable global top stories, so the WIRE panel never goes empty
+ * just because GDELT is having a moment. Both are real headline sources; the
+ * response names which one answered.
+ */
+async function buildMonitorWire(query) {
+  const q = String(query || 'conflict OR crisis OR breaking').slice(0, 120);
+  try {
+    const url = 'https://api.gdeltproject.org/api/v2/doc/doc?'
+      + new URLSearchParams({
+        query: q, mode: 'artlist', format: 'json', maxrecords: '40',
+        timespan: '2d', sort: 'datedesc',
+      });
+    const d = await monitorJson(url, { timeoutMs: 12000 });
+    const articles = (Array.isArray(d?.articles) ? d.articles : []).map((a) => ({
+      title: a.title, url: a.url, domain: a.domain,
+      country: a.sourcecountry, seenAt: a.seendate, image: a.socialimage || null,
+    }));
+    if (articles.length) return { source: 'GDELT', articles, retrievedAt: new Date().toISOString() };
+    throw new Error('GDELT returned no articles');
+  } catch {
+    // GDELT unreachable/empty — fall back to Google News RSS.
+    const resp = await fetch(
+      `https://news.google.com/rss/search?q=${encodeURIComponent(q)}&hl=en-US&gl=US&ceid=US:en`,
+      { headers: { 'User-Agent': 'JP-GOD-EYE-monitor/1.0' }, signal: AbortSignal.timeout(15000) },
+    );
+    if (!resp.ok) throw new Error(`news fallback HTTP ${resp.status}`);
+    const articles = parseRssItems(await resp.text()).slice(0, 40);
+    return { source: 'Google News', articles, retrievedAt: new Date().toISOString() };
+  }
+}
+
+/** Prediction-market odds on live topics (Polymarket Gamma, keyless). */
+async function buildMonitorPredictions() {
+  const rows = await monitorJson(
+    'https://gamma-api.polymarket.com/markets?limit=24&active=true&closed=false&order=volume24hr&ascending=false',
+  );
+  const markets = (Array.isArray(rows) ? rows : []).map((m) => {
+    // Outcome prices ship as a JSON-encoded string array parallel to outcomes.
+    let outcomes = [];
+    try {
+      const names = Array.isArray(m.outcomes) ? m.outcomes : JSON.parse(m.outcomes || '[]');
+      const prices = Array.isArray(m.outcomePrices) ? m.outcomePrices : JSON.parse(m.outcomePrices || '[]');
+      outcomes = names.map((name, i) => ({ name, probability: Number(prices[i]) }))
+        .filter((o) => Number.isFinite(o.probability));
+    } catch { outcomes = []; }
+    return {
+      question: m.question,
+      slug: m.slug,
+      volume24h: Number(m.volume24hr) || 0,
+      endDate: m.endDate || null,
+      outcomes,
+    };
+  }).filter((m) => m.question && m.outcomes.length);
+  return { markets, retrievedAt: new Date().toISOString() };
+}
+
+const MONITOR_FEEDS = {
+  crypto: { ttl: 60_000, build: () => buildMonitorCrypto() },
+  metals: { ttl: 120_000, build: () => buildMonitorMetals() },
+  indices: { ttl: 120_000, build: () => buildMonitorIndices() },
+  fx: { ttl: 15 * 60_000, build: () => buildMonitorFx() },
+  predictions: { ttl: 5 * 60_000, build: () => buildMonitorPredictions() },
+};
+
+function monitorProxy() {
+  const install = (server) => {
+    server.middlewares.use('/api/monitor', async (req, res) => {
+      const json = (status, body) => {
+        res.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+        res.end(JSON.stringify(body));
+      };
+      try {
+        const url = new URL(req.url || '/', 'http://localhost');
+        const name = url.pathname.replace(/^\//, '').split('/')[0];
+        // The wire feed takes a free-text query, so it is keyed by that query
+        // and handled separately from the fixed-shape feeds.
+        if (name === 'wire') {
+          const q = url.searchParams.get('q') || '';
+          const payload = await serveMonitorFeed(`wire:${q}`, 5 * 60_000, () => buildMonitorWire(q));
+          return json(200, payload);
+        }
+        const feed = Object.prototype.hasOwnProperty.call(MONITOR_FEEDS, name) ? MONITOR_FEEDS[name] : null;
+        if (!feed) return json(404, { error: 'Unknown monitor feed' });
+        const payload = await serveMonitorFeed(name, feed.ttl, feed.build);
+        return json(200, payload);
+      } catch (error) {
+        return json(502, { error: error?.message || 'Monitor feed failed' });
+      }
+    });
+  };
+  return { name: 'monitor-proxy', configureServer: install, configurePreviewServer: install };
+}
+
 export default defineConfig(({ mode }) => {
   // Load only this checkout's dotenv files. Shell/Keychain values still win,
   // and no sibling workspace is consulted implicitly.
@@ -8598,6 +8841,7 @@ export default defineConfig(({ mode }) => {
         trackBackfillProxies(),
         openAiRealtimeProxy(),
         keylessGeoProxy(),
+        monitorProxy(),
       ].map(servedInProduction),
     ],
     preview: {
@@ -8673,6 +8917,9 @@ export default defineConfig(({ mode }) => {
           // The setup wizard is a second entry point so it survives a
           // production build instead of only existing in dev.
           setup: path.resolve(__dirname, 'setup.html'),
+          // The MONITOR dashboard (WIRE / SITUATION / THEATER / MARKETS /
+          // CAMERAS) is its own page served from the same origin.
+          monitor: path.resolve(__dirname, 'monitor.html'),
         },
       },
       // The Cesium engine bundle is inherently large; raise the warning ceiling

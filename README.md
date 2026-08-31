@@ -18,10 +18,30 @@ a switcher in the header:
 | **GLOBE** | `/` | CesiumJS (3D) | Photoreal-class 3D globe, 1,649 cameras, HD Europe imagery |
 | **OSIRIS** | `/osiris` | MapLibre GL (2D) | Flat intelligence board — 17,800+ cameras, conflicts, cyber, maritime, OSINT tooling |
 | **SIM** | `/` → SIM | CesiumJS overlay | Hazard modelling: earthquake shaking contours, wind-driven fire spread, tsunami isochrones |
+| **MONITOR** | `/monitor.html` | Vanilla dashboard | Five monitoring boards — WIRE, SITUATION, THEATER, MARKETS, CAMERAS |
 
 They are separate applications (Vite + vanilla JS; Next.js + TypeScript) joined
 by a dev-server proxy, so each keeps its own stack and its own bookmarkable URL
 while the browser sees one site — no CORS, no second port to remember.
+
+## 📡 MONITOR dashboard
+
+`/monitor.html` — a tabbed situational-awareness dashboard, in the spirit of
+sites like world-monitor.com, monitor-the-situation.com and war.direct, built
+entirely on the same free public feeds those sites use:
+
+| Board | Inspired by | Shows |
+|---|---|---|
+| **WIRE** | world-monitor | Live global news wire (GDELT → Google News fallback), live signal counters (quakes, disasters, flights, fires), prediction-market odds (Polymarket) |
+| **SITUATION** | monitor-the-situation | Severity-ranked global events (GDACS disasters + EMSC seismic), each linking its source and locatable on the globe |
+| **THEATER** | war.direct | Military ADS-B traffic (adsb.lol), a conflict news wire, and a live report card |
+| **MARKETS** | *(new, the 6th board)* | Crypto (CoinGecko), precious metals (gold-api), indices & commodities (Yahoo Finance), FX (Frankfurter/ECB), market news |
+| **CAMERAS** | — | Every public camera in the catalog (~1,650), filterable by country |
+
+Every panel reads the app's own keyless proxies and **fails soft**: a dead feed
+shows an error line, never a blank board. All data sources are free and keyless
+(GDELT, Google News, USGS, EMSC, GDACS, NASA FIRMS, adsb.lol, CoinGecko,
+gold-api, Yahoo Finance, Frankfurter, Polymarket).
 
 ## 🧮 Hazard Simulation
 
