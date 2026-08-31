@@ -61,6 +61,7 @@ function selectView(name) {
   for (const btn of document.querySelectorAll('.tab')) btn.classList.toggle('on', btn.dataset.view === name);
   for (const sec of document.querySelectorAll('.view')) sec.classList.toggle('on', sec.id === `view-${name}`);
   if (!rendered.has(name)) { rendered.add(name); (views[name] || (() => {}))(); }
+  highlightHeaderNav(name);
   try { history.replaceState(null, '', `?view=${name}`); } catch { /* file:// */ }
 }
 
@@ -504,6 +505,16 @@ views.cameras = async () => {
   $('#cam-search').addEventListener('input', () => { clearTimeout(searchTimer); searchTimer = setTimeout(applyFilter, 250); });
   renderNext();
 };
+
+// Highlight the header system-link that matches the active view, so the
+// top-level nav shows which of the named systems you are in.
+function highlightHeaderNav(view) {
+  const map = { wire: 'view=wire', situation: 'view=situation', theater: 'view=theater', markets: 'view=markets' };
+  for (const a of document.querySelectorAll('.topnav a, header a, nav a')) {
+    const href = a.getAttribute('href') || '';
+    if (href.includes('view=')) a.classList.toggle('on', map[view] && href.includes(map[view]));
+  }
+}
 
 // ── Boot: honor ?view= ───────────────────────────────────────────────────────
 const initial = new URLSearchParams(location.search).get('view');
