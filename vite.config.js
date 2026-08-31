@@ -3437,7 +3437,7 @@ const DEFAULT_AUSTIN_ROWS_URL = 'https://data.austintexas.gov/api/views/b4k4-adk
 /** Default cap on Austin cameras after distance-based prioritization. */
 const DEFAULT_AUSTIN_MAX_SOURCES = 250;
 /** Global cap on total CCTV sources served by the proxy. */
-const DEFAULT_CCTV_MAX_SOURCES = 1800;
+const DEFAULT_CCTV_MAX_SOURCES = 3000;
 /** Reference point for Austin camera prioritization (Congress & 6th). */
 const AUSTIN_DOWNTOWN = { lat: 30.2672, lon: -97.7431 };
 /** Caltrans CCTV: one JSON feed per district, identical schema statewide. */
@@ -4131,7 +4131,7 @@ function normalizeSourceItem(item) {
 /** @const {string} Windy Webcams v3 list endpoint (free tier, key required). */
 const WINDY_WEBCAMS_URL = 'https://api.windy.com/webcams/api/v3/webcams';
 /** @const {number} Default cap on Windy cameras pulled into the registry. */
-const DEFAULT_WINDY_MAX_SOURCES = 900;
+const DEFAULT_WINDY_MAX_SOURCES = 1500;
 /**
  * European anchor boxes. Windy caps `limit` per request, so coverage comes from
  * a handful of bounded regional queries rather than one continental sweep —
@@ -4223,7 +4223,7 @@ async function loadWindyWebcamSources() {
 
   const maxRaw = Number(process.env.CCTV_WINDY_MAX_SOURCES || DEFAULT_WINDY_MAX_SOURCES);
   const maxCount = Number.isFinite(maxRaw)
-    ? Math.max(0, Math.min(900, Math.floor(maxRaw)))
+    ? Math.max(0, Math.min(2000, Math.floor(maxRaw)))
     : DEFAULT_WINDY_MAX_SOURCES;
   if (maxCount === 0) return [];
 
@@ -4671,7 +4671,7 @@ async function refreshCctvSources() {
   // ~1000 cameras, and the old ceiling silently truncated the merge — which,
   // with Europe leading the merge order, cost the entire Caltrans pack. Both
   // theatres have to fit.
-  const maxCount = Number.isFinite(maxRaw) ? Math.max(8, Math.min(2000, Math.floor(maxRaw))) : DEFAULT_CCTV_MAX_SOURCES;
+  const maxCount = Number.isFinite(maxRaw) ? Math.max(8, Math.min(4000, Math.floor(maxRaw))) : DEFAULT_CCTV_MAX_SOURCES;
   if (mergedSources.length > maxCount) {
     console.warn(`[CCTV] source catalog ${mergedSources.length} exceeds cap ${maxCount}; keeping the first ${maxCount} (raise CCTV_MAX_SOURCES or lower a per-pack cap to change which).`);
   }
@@ -8770,12 +8770,107 @@ async function buildMonitorPredictions() {
   return { markets, retrievedAt: new Date().toISOString() };
 }
 
+/**
+ * Curated 24/7 public live news channels (YouTube live embeds).
+ *
+ * These are the always-on official streams the reference dashboards embed for
+ * their "Live TV" walls. IDs are the channels' persistent live-stream video
+ * ids; a channel that restarts under a new id is corrected here in one place.
+ * Nothing is scraped — these are the broadcasters' own public embeds.
+ */
+function buildMonitorStreams() {
+  const streams = [
+    { name: 'Al Jazeera English', region: 'Global', ytId: 'gCNeDWCI0vo' },
+    { name: 'DW News', region: 'Europe', ytId: 'tZT2MCYu6Zw' },
+    { name: 'Sky News', region: 'UK', ytId: 'YDvsBbKfLPA' },
+    { name: 'France 24 English', region: 'Europe', ytId: 'l8PMl7tUDIE' },
+    { name: 'ABC News Live (US)', region: 'US', ytId: 'w_Ma8oQLmSM' },
+    { name: 'NBC News NOW', region: 'US', ytId: 'a_iud3bEBEs' },
+    { name: 'Bloomberg TV', region: 'Markets', ytId: 'iEpJwprxDdk' },
+    { name: 'euronews', region: 'Europe', ytId: 'pykpO5kQJ98' },
+    { name: 'TRT World', region: 'MENA', ytId: 'ADr8Vw2Gxc4' },
+    { name: 'CNA (Singapore)', region: 'Asia', ytId: 'XWq5kBlakcQ' },
+    { name: 'GB News', region: 'UK', ytId: 'Gr5FQGkjcNM' },
+    { name: 'NASA Live', region: 'Space', ytId: '21X5lGlDOfg' },
+  ].map((c) => ({
+    ...c,
+    embed: `https://www.youtube.com/embed/${c.ytId}?autoplay=0&mute=1`,
+    watch: `https://www.youtube.com/watch?v=${c.ytId}`,
+  }));
+  return { streams, retrievedAt: new Date().toISOString() };
+}
+
+/**
+ * Global outbreak / public-health signal from disease.sh (keyless) plus any
+ * GDACS epidemic events. Not an alert system — a situational health readout.
+ */
+async function buildMonitorOutbreaks() {
+  const out = { global: null, countries: [], epidemics: [], retrievedAt: new Date().toISOString() };
+  try {
+    const g = await monitorJson('https://disease.sh/v3/covid-19/all', { timeoutMs: 12000 });
+    out.global = { cases: g.cases, todayCases: g.todayCases, deaths: g.deaths, todayDeaths: g.todayDeaths, recovered: g.recovered, updated: g.updated };
+    const c = await monitorJson('https://disease.sh/v3/covid-19/countries?sort=cases', { timeoutMs: 12000 });
+    out.countries = (Array.isArray(c) ? c : []).slice(0, 15).map((x) => ({
+      country: x.country, cc: x.countryInfo?.iso2 || '', todayCases: x.todayCases, todayDeaths: x.todayDeaths,
+      cases: x.cases, active: x.active, critical: x.critical,
+      lat: x.countryInfo?.lat, lon: x.countryInfo?.long,
+    }));
+  } catch (e) { out.error = String(e?.message || e); }
+  try {
+    const ep = await monitorJson('https://www.gdacs.org/gdacsapi/api/events/geteventlist/SEARCH?eventlist=EP&alertlevel=Green;Orange;Red', { timeoutMs: 12000 });
+    out.epidemics = (ep?.features || []).map((f) => ({
+      name: f.properties?.name || f.properties?.htmldescription, country: f.properties?.country,
+      alert: f.properties?.alertlevel, from: f.properties?.fromdate,
+    })).slice(0, 15);
+  } catch { /* GDACS epidemics optional */ }
+  return out;
+}
+
+/**
+ * A DEFCON-style global threat readout, computed — not invented — from the
+ * same live feeds the SITUATION and THEATER views use: earthquake energy,
+ * active disaster alerts, wildfire count and military-aircraft activity. The
+ * five levels map to escalating aggregate signal, and the contributing numbers
+ * are returned so the gauge is transparent rather than a magic dial.
+ */
+async function buildMonitorThreat() {
+  const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
+  const signals = { quakes: 0, majorQuakes: 0, disasters: 0, redDisasters: 0, fires: 0, milAircraft: 0 };
+  await Promise.allSettled([
+    (async () => {
+      const d = await monitorJson('https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_day.geojson', { timeoutMs: 12000 });
+      const f = d?.features || [];
+      signals.quakes = f.length;
+      signals.majorQuakes = f.filter((x) => num(x.properties?.mag) >= 5).length;
+    })(),
+    (async () => {
+      const d = await monitorJson('https://www.gdacs.org/gdacsapi/api/events/geteventlist/SEARCH?alertlevel=Green;Orange;Red&eventlist=EQ;TC;FL;VO;WF;DR', { timeoutMs: 12000 });
+      const f = d?.features || [];
+      signals.disasters = f.length;
+      signals.redDisasters = f.filter((x) => String(x.properties?.alertlevel).toLowerCase() === 'red').length;
+    })(),
+    (async () => {
+      const d = await monitorJson('https://api.adsb.lol/v2/mil', { timeoutMs: 12000 });
+      signals.milAircraft = (d?.ac || []).length;
+    })(),
+  ]);
+  // Weighted aggregate → 1..5 (5 = highest readiness, i.e. most active).
+  const score = signals.majorQuakes * 6 + signals.redDisasters * 8
+    + Math.min(40, signals.disasters) + Math.min(30, Math.floor(signals.milAircraft / 20));
+  const level = score >= 90 ? 5 : score >= 60 ? 4 : score >= 35 ? 3 : score >= 15 ? 2 : 1;
+  const labels = { 5: 'SEVERE', 4: 'HIGH', 3: 'ELEVATED', 2: 'GUARDED', 1: 'LOW' };
+  return { level, label: labels[level], score, signals, retrievedAt: new Date().toISOString() };
+}
+
 const MONITOR_FEEDS = {
   crypto: { ttl: 60_000, build: () => buildMonitorCrypto() },
   metals: { ttl: 120_000, build: () => buildMonitorMetals() },
   indices: { ttl: 120_000, build: () => buildMonitorIndices() },
   fx: { ttl: 15 * 60_000, build: () => buildMonitorFx() },
   predictions: { ttl: 5 * 60_000, build: () => buildMonitorPredictions() },
+  streams: { ttl: 6 * 3600_000, build: () => buildMonitorStreams() },
+  outbreaks: { ttl: 30 * 60_000, build: () => buildMonitorOutbreaks() },
+  threat: { ttl: 5 * 60_000, build: () => buildMonitorThreat() },
 };
 
 function monitorProxy() {

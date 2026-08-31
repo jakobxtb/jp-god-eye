@@ -92,7 +92,23 @@
     .controls select, .controls button { background:var(--panel); border:1px solid var(--line); color:#fff; font-family:inherit; font-size:11px; padding:6px 10px; cursor:pointer; }
     .foot { padding:20px 18px; border-top:1px solid var(--line); font-size:10px; color:rgba(255,255,255,.35); }
     .foot a { color:var(--accent); }
-  </style>
+      /* Live-TV wall */
+    .cols-tv { grid-template-columns:repeat(auto-fill,minmax(320px,1fr)); gap:12px; }
+    .tv { background:#05080c; border:1px solid var(--line); overflow:hidden; }
+    .tv iframe { width:100%; aspect-ratio:16/9; border:0; display:block; background:#000; }
+    .tv .lab { padding:7px 10px; font-size:11px; display:flex; justify-content:space-between; }
+    .tv .reg { color:rgba(255,255,255,.4); }
+    /* Threat gauge */
+    .gauge { display:flex; align-items:center; gap:18px; padding:18px 20px; border:1px solid var(--line); background:var(--panel); margin-bottom:14px; }
+    .gauge .lvl { font-size:52px; font-weight:700; line-height:1; }
+    .gauge .meta { flex:1; }
+    .gauge .bars { display:flex; gap:4px; margin-top:8px; }
+    .gauge .bars i { flex:1; height:10px; background:rgba(255,255,255,.08); }
+    .l1{color:#63d6c0} .l2{color:#c8e64a} .l3{color:#ffd21f} .l4{color:#ffa41b} .l5{color:#ff2d2d}
+    .l1b{background:#63d6c0} .l2b{background:#c8e64a} .l3b{background:#ffd21f} .l4b{background:#ffa41b} .l5b{background:#ff2d2d}
+    .obk { display:flex; justify-content:space-between; padding:7px 10px; border-bottom:1px solid var(--line); font-size:12px; }
+    .obk b { color:var(--accent); }
+</style>
 </head>
 <body>
   <div class="topbar">
@@ -110,6 +126,8 @@
     <button class="tab" data-view="situation">SITUATION<span class="tabsub">the-situation</span></button>
     <button class="tab" data-view="theater">THEATER<span class="tabsub">war.direct</span></button>
     <button class="tab" data-view="markets">MARKETS<span class="tabsub">crypto · metals · indices</span></button>
+    <button class="tab" data-view="streams">STREAMS<span class="tabsub">live TV</span></button>
+    <button class="tab" data-view="pulse">PULSE<span class="tabsub">threat · outbreaks</span></button>
     <button class="tab" data-view="cameras">CAMERAS<span class="tabsub">all feeds</span></button>
   </div>
 
@@ -118,11 +136,13 @@
     <section class="view" id="view-situation"></section>
     <section class="view" id="view-theater"></section>
     <section class="view" id="view-markets"></section>
+    <section class="view" id="view-streams"></section>
+    <section class="view" id="view-pulse"></section>
     <section class="view" id="view-cameras"></section>
   </main>
 
   <div class="foot">
-    JP GOD EYE — Monitor · Built on free public feeds: GDELT · Google News · USGS · EMSC · GDACS · NASA FIRMS · adsb.lol · AISStream · CoinGecko · gold-api · Yahoo Finance · Frankfurter (ECB) · Polymarket.
+    JP GOD EYE — Monitor · Built on free public feeds: GDELT · Google News · USGS · EMSC · GDACS · NASA FIRMS · adsb.lol · AISStream · CoinGecko · gold-api · Yahoo Finance · Frankfurter (ECB) · Polymarket · disease.sh · YouTube Live.
     <a href="/">← Back to the globe</a>
   </div>
 

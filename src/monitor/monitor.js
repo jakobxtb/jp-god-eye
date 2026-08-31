@@ -1,12 +1,14 @@
 /**
  * @file MONITOR dashboard controller.
  *
- * Five views mapped onto the reference sites the user named:
+ * Seven views drawing every function of the reference sites into one board:
  *   WIRE      — world-monitor.com   (global news wire + live stats + predictions)
  *   SITUATION — monitor-the-situation.com (severity-ranked global events + sources)
  *   THEATER   — war.direct          (military flights, conflict news, report card)
- *   MARKETS   — the new 6th board   (crypto, metals, indices, FX, business news)
- *   CAMERAS   — every public camera in the catalog
+ *   MARKETS   — market monitoring    (crypto, metals, indices, FX, business news)
+ *   STREAMS   — live TV wall         (24/7 public news livestreams)
+ *   PULSE     — threat + outbreaks   (computed DEFCON gauge + global health)
+ *   CAMERAS   — ~19,800 public cameras worldwide (6,000+ Europe)
  *
  * Every panel reads the app's own keyless proxies (/api/monitor/*, /api/situation/*,
  * /api/cctv/*, /api/opensky, /api/adsblol/mil). Each render is independent and
@@ -294,6 +296,97 @@ views.markets = async () => {
       newsBody.append(item);
     }
   }).catch(() => { newsBody.innerHTML = '<div class="err">Market news unavailable.</div>'; });
+};
+
+// ── STREAMS (live TV — world-monitor / war.direct) ──────────────────────────
+//
+// A wall of 24/7 public news livestreams. Iframes are lazy: only the ones
+// scrolled near the viewport get a src, so opening the tab does not spin up a
+// dozen video players at once.
+views.streams = async () => {
+  const root = $('#view-streams');
+  root.innerHTML = '<div class="controls"><span class="muted">LIVE TELEVISION · public 24/7 news streams</span></div>';
+  const grid = el('div', 'grid cols-tv'); root.append(grid);
+  const d = await getJson('/api/monitor/streams').catch(() => null);
+  const streams = d && d.streams;
+  if (!streams || !streams.length) { grid.innerHTML = '<div class="err">Streams unavailable.</div>'; return; }
+  const io = ('IntersectionObserver' in window) ? new IntersectionObserver((entries) => {
+    for (const en of entries) {
+      if (!en.isIntersecting) continue;
+      const f = en.target; if (!f.dataset.src) continue;
+      f.src = f.dataset.src; f.removeAttribute('data-src'); io.unobserve(f);
+    }
+  }, { rootMargin: '200px' }) : null;
+  for (const c of streams) {
+    const card = el('div', 'tv');
+    const frame = el('iframe');
+    frame.setAttribute('allow', 'encrypted-media; picture-in-picture');
+    frame.setAttribute('referrerpolicy', 'strict-origin-when-cross-origin');
+    frame.loading = 'lazy';
+    if (io) { frame.dataset.src = c.embed; } else { frame.src = c.embed; }
+    card.append(frame);
+    const lab = el('div', 'lab');
+    lab.append(el('a', null, esc(c.name)));
+    lab.querySelector('a').href = c.watch; lab.querySelector('a').target = '_blank'; lab.querySelector('a').rel = 'noopener noreferrer';
+    lab.querySelector('a').style.color = 'var(--accent)'; lab.querySelector('a').style.textDecoration = 'none';
+    lab.append(el('span', 'reg', esc(c.region)));
+    card.append(lab);
+    grid.append(card);
+    if (io) io.observe(frame);
+  }
+};
+
+// ── PULSE (threat level + outbreaks — world-monitor defcon/outbreaks) ─────────
+//
+// A computed DEFCON-style gauge (transparent: the contributing signals are
+// shown) plus a global public-health readout from disease.sh.
+views.pulse = async () => {
+  const root = $('#view-pulse');
+  root.innerHTML = '';
+  const gaugeWrap = el('div'); root.append(gaugeWrap);
+  const grid = el('div', 'grid cols-2'); root.append(grid);
+  const threatBox = el('div', 'panel'); threatBox.innerHTML = '<h2>THREAT SIGNALS</h2><div class="muted">Loading…</div>';
+  const healthBox = el('div', 'panel'); healthBox.innerHTML = '<h2>GLOBAL HEALTH</h2><div class="muted">Loading…</div>';
+  grid.append(threatBox, healthBox);
+
+  getJson('/api/monitor/threat', 60000).then((d) => {
+    const lvl = d.level || 1;
+    gaugeWrap.innerHTML = `<div class="gauge">
+      <div class="lvl l${lvl}">${lvl}</div>
+      <div class="meta">
+        <div style="font-size:16px;letter-spacing:.16em" class="l${lvl}">THREAT LEVEL — ${esc(d.label || '')}</div>
+        <div class="muted" style="margin-top:4px">Computed from live global signals · score ${d.score}</div>
+        <div class="bars">${[1, 2, 3, 4, 5].map((i) => `<i class="${i <= lvl ? 'l' + lvl + 'b' : ''}"></i>`).join('')}</div>
+      </div></div>`;
+    const s = d.signals || {};
+    threatBox.innerHTML = '<h2>THREAT SIGNALS</h2>'
+      + [['Earthquakes (24h)', s.quakes], ['Major quakes ≥ M5', s.majorQuakes],
+         ['Active disaster alerts', s.disasters], ['Red-level disasters', s.redDisasters],
+         ['Military aircraft airborne', s.milAircraft]]
+        .map(([k, v]) => `<div class="obk"><span>${k}</span><b>${(v || 0).toLocaleString()}</b></div>`).join('');
+  }).catch(() => { gaugeWrap.innerHTML = '<div class="err">Threat feed unavailable.</div>'; threatBox.innerHTML = '<h2>THREAT SIGNALS</h2><div class="err">unavailable</div>'; });
+
+  getJson('/api/monitor/outbreaks', 60000).then((d) => {
+    const g = d.global || {};
+    let html = '<h2>GLOBAL HEALTH</h2>';
+    if (g.cases) {
+      html += `<div class="obk"><span>Total cases (tracked)</span><b>${Number(g.cases).toLocaleString()}</b></div>`
+        + `<div class="obk"><span>New today</span><b>${Number(g.todayCases || 0).toLocaleString()}</b></div>`
+        + `<div class="obk"><span>Deaths today</span><b>${Number(g.todayDeaths || 0).toLocaleString()}</b></div>`;
+    }
+    if ((d.countries || []).length) {
+      // Daily reporting largely stopped post-pandemic (todayCases is 0 almost
+      // everywhere), so the meaningful, non-zero figure is cumulative total.
+      html += '<div class="muted" style="margin:10px 0 4px">Most affected — cumulative tracked cases</div>';
+      html += d.countries.slice(0, 12).map((c) =>
+        `<div class="obk"><span>${esc(c.country)}</span><b>${Number(c.cases || 0).toLocaleString()}</b></div>`).join('');
+    }
+    if ((d.epidemics || []).length) {
+      html += '<div class="muted" style="margin:10px 0 4px">GDACS epidemic alerts</div>';
+      html += d.epidemics.map((e) => `<div class="obk"><span>${esc(e.name || e.country)}</span><b>${esc(e.alert || '')}</b></div>`).join('');
+    }
+    healthBox.innerHTML = html;
+  }).catch(() => { healthBox.innerHTML = '<h2>GLOBAL HEALTH</h2><div class="err">unavailable</div>'; });
 };
 
 // ── CAMERAS (all feeds) ──────────────────────────────────────────────────────
